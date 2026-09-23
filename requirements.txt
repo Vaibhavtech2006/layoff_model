@@ -1,0 +1,13 @@
+@"
+pandas==3.0.5
+numpy==2.4.6
+scikit-learn==1.9.0
+xgboost==3.2.0
+yfinance==1.7.0
+requests==2.34.2
+python-dotenv==1.2.3
+joblib==1.6.0
+shap==0.51.0
+torch==2.14.0
+transformers==5.16.1
+"@ | Set-Content E:\major_project\layoff_model\requirements.txt
