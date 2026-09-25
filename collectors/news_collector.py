@@ -1,296 +1,94 @@
 import os
 import json
 import re
-
+import urllib.parse
 import requests
-
-from datetime import datetime, timedelta
-
-
-NEWS_API_URL = "https://newsapi.org/v2/everything"
+import xml.etree.ElementTree as ET
+from datetime import datetime
 
 
-def get_news(
-    company_name,
-    days=30,
-    to_date=None,
-    page_size=100
-):
-    """Collect company-related news from NewsAPI."""
+def get_news(company_name, days=30, max_results=40):
+    """
+    100% Free Global News Collector using Google News RSS.
+    Works for any company in the world without any API key!
+    """
+    print(f"Collecting live global news for {company_name} (last {days}d)...")
 
-    api_key = os.getenv("NEWS_API_KEY")
-
-    if not api_key:
-        raise ValueError(
-            "NEWS_API_KEY not found in .env"
-        )
-
-    if to_date is None:
-        end_date = datetime.utcnow()
-    else:
-        end_date = datetime.strptime(
-            to_date,
-            "%Y-%m-%d"
-        )
-
-    start_date = end_date - timedelta(days=days)
-
-    params = {
-        "q": f'"{company_name}"',
-        "from": start_date.strftime("%Y-%m-%d"),
-        "to": end_date.strftime("%Y-%m-%d"),
-        "language": "en",
-        "sortBy": "publishedAt",
-        "pageSize": page_size,
-        "page": 1
-    }
+    # Query specifically targets company + business/workforce context
+    # Line 19 in collectors/news_collector.py:
+    query = f'"{company_name}" (stock OR earnings OR layoffs OR workforce OR restructuring OR revenue) when:{days}d'
+    encoded_query = urllib.parse.quote(query)
+    rss_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
 
     headers = {
-        "X-Api-Key": api_key
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
     }
 
-    print(
-        f"Collecting news for {company_name}..."
-    )
-
-    response = requests.get(
-        NEWS_API_URL,
-        params=params,
-        headers=headers,
-        timeout=30
-    )
-
+    response = requests.get(rss_url, headers=headers, timeout=20)
     if response.status_code != 200:
+        raise RuntimeError(f"Google News RSS error: {response.status_code}")
 
-        try:
-            error_data = response.json()
-            message = error_data.get(
-                "message",
-                "Unknown NewsAPI error"
-            )
-        except Exception:
-            message = response.text
+    root = ET.fromstring(response.content)
+    articles = []
 
-        raise RuntimeError(
-            f"NewsAPI error "
-            f"{response.status_code}: {message}"
-        )
+    for item in root.findall(".//item")[:max_results]:
+        title = item.findtext("title") or ""
+        description = item.findtext("description") or ""
+        # Strip HTML tags from RSS description
+        clean_desc = re.sub(r"<[^>]+>", " ", description).strip()
+        pub_date = item.findtext("pubDate") or ""
+        link = item.findtext("link") or ""
+        source_elem = item.find("source")
+        source_name = source_elem.text if source_elem is not None else "Google News"
 
-    data = response.json()
+        articles.append({
+            "source": {"name": source_name},
+            "title": title,
+            "description": clean_desc,
+            "content": clean_desc,
+            "publishedAt": pub_date,
+            "url": link
+        })
 
-    if data.get("status") != "ok":
-        raise RuntimeError(
-            data.get(
-                "message",
-                "NewsAPI request failed."
-            )
-        )
-
-    articles = data.get(
-        "articles",
-        []
-    )
-
-    print(
-        f"Articles collected: {len(articles)}"
-    )
-
+    print(f"Articles collected: {len(articles)}")
     return articles
 
 
-def is_relevant_article(
-    article,
-    company_name
-):
-    """
-    Check whether the company is actually
-    relevant to the article.
-    """
-
-    title = article.get("title") or ""
-    description = article.get("description") or ""
-
-    text = (
-        title + " " + description
-    ).lower()
-
-    company = company_name.lower().strip()
-
-    # Direct company-name match
-    if company in text:
-        return True
-
-    # Individual words for multi-word companies
-    words = [
-        word
-        for word in re.findall(
-            r"[a-zA-Z0-9]+",
-            company
-        )
-        if len(word) > 2
-    ]
-
-    if not words:
-        return False
-
-    matches = sum(
-        word in text
-        for word in words
-    )
-
-    # Require at least half the company
-    # name's meaningful words.
-    return matches >= max(
-        1,
-        len(words) // 2
-    )
-
-
-def clean_articles(
-    articles,
-    company_name
-):
-    """
-    Filter irrelevant articles and keep
-    fields needed for NLP.
-    """
-
+def clean_articles(articles, company_name):
+    """Prepare articles for FinBERT sentiment analysis."""
     cleaned = []
-
     for article in articles:
+        title = article.get("title") or ""
+        description = article.get("description") or ""
+        text = f"{title}. {description}".strip()
 
-        if not is_relevant_article(
-            article,
-            company_name
-        ):
+        if not text:
             continue
 
-        title = article.get(
-            "title"
-        )
-
-        description = article.get(
-            "description"
-        )
-
-        content = article.get(
-            "content"
-        )
-
-        # Prefer title + description.
-        # NewsAPI content may be truncated.
-        text_parts = [
-            title,
-            description
-        ]
-
-        text_parts = [
-            text.strip()
-            for text in text_parts
-            if text
-        ]
-
-        text = " ".join(
-            text_parts
-        )
-
-        cleaned_article = {
-
-            "source": (
-                article
-                .get("source", {})
-                .get("name")
-            ),
-
+        cleaned.append({
+            "source": article.get("source", {}).get("name"),
             "title": title,
-
             "description": description,
-
-            "content": content,
-
+            "content": article.get("content"),
             "text": text,
+            "published_at": article.get("publishedAt"),
+            "url": article.get("url")
+        })
 
-            "published_at": article.get(
-                "publishedAt"
-            ),
-
-            "url": article.get(
-                "url"
-            )
-        }
-
-        cleaned.append(
-            cleaned_article
-        )
-
-    print(
-        f"Relevant articles: "
-        f"{len(cleaned)}"
-    )
-
+    print(f"Relevant articles ready for FinBERT: {len(cleaned)}")
     return cleaned
 
 
-def save_raw_news(
-    articles,
-    company_name
-):
-    """Save raw NewsAPI response."""
-
-    os.makedirs(
-        "data/raw",
-        exist_ok=True
-    )
-
-    safe_name = re.sub(
-        r"[^a-zA-Z0-9_-]",
-        "_",
-        company_name.lower()
-    )
-
-    file_path = (
-        f"data/raw/news_{safe_name}.json"
-    )
-
-    with open(
-        file_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
-
-        json.dump(
-            articles,
-            file,
-            indent=2,
-            ensure_ascii=False
-        )
-
-    print(
-        f"Raw news saved to: {file_path}"
-    )
+def save_raw_news(articles, company_name):
+    os.makedirs("data/raw", exist_ok=True)
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "_", company_name.lower())
+    file_path = f"data/raw/news_{safe_name}.json"
+    with open(file_path, "w", encoding="utf-8") as file:
+        json.dump(articles, file, indent=2, ensure_ascii=False)
 
 
-def get_company_news(
-    company_name,
-    days=30,
-    to_date=None
-):
-    """Complete NewsAPI collection pipeline."""
-
-    articles = get_news(
-        company_name=company_name,
-        days=days,
-        to_date=to_date
-    )
-
-    save_raw_news(
-        articles,
-        company_name
-    )
-
-    cleaned_articles = clean_articles(
-        articles,
-        company_name
-    )
-
-    return cleaned_articles
+def get_company_news(company_name, days=30, to_date=None):
+    """Complete pipeline called by predict.py"""
+    articles = get_news(company_name=company_name, days=days)
+    save_raw_news(articles, company_name)
+    return clean_articles(articles, company_name)

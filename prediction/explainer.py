@@ -14,7 +14,9 @@ import shap
 # Paths
 # ------------------------------------------------------------
 
-MODEL_PATH = "data/training/models/xgboost_final_calibrated.pkl"
+from pathlib import Path
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+MODEL_PATH = PROJECT_ROOT / "data" / "training" / "models" / "xgboost_v2_calibrated.pkl"
 
 
 # ------------------------------------------------------------
@@ -269,7 +271,7 @@ if __name__ == "__main__":
     print("\nProbability:")
     print(
         f"{result['probability'] * 100:.2f}%"
-    )
+    ).
 
 
     print("\nRaw probability:")

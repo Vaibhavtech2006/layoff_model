@@ -145,43 +145,46 @@ def analyze_article(article):
     }
 
 
-def analyze_articles(
-    articles
-):
+def analyze_articles(articles):
     """
-    Analyze all articles.
+    Analyze all articles in a fast batch instead of a slow loop.
     """
+    if not articles:
+        return []
+
+    print(f"Running FinBERT batch inference on {len(articles)} articles...")
+
+    texts = [
+        (a.get("text") or "").strip()[:2000]
+        for a in articles
+    ]
+
+    # Batch run on valid non-empty texts
+    valid_indices = [i for i, t in enumerate(texts) if t]
+    valid_texts = [texts[i] for i in valid_indices]
+
+    batch_results = {}
+    if valid_texts:
+        preds = sentiment_pipeline(valid_texts, truncation=True, batch_size=16)
+        for idx, pred in zip(valid_indices, preds):
+            batch_results[idx] = pred
 
     analyzed = []
+    for i, article in enumerate(articles):
+        text = texts[i]
+        pred = batch_results.get(i, {"label": "neutral", "score": 0.0})
 
-    print(
-        f"Running FinBERT on "
-        f"{len(articles)} articles..."
-    )
-
-    for i, article in enumerate(
-        articles,
-        start=1
-    ):
-
-        sentiment = analyze_article(
-            article
-        )
-
-        analyzed_article = {
-            **article,
-            **sentiment
+        sentiment = {
+            "label": pred["label"].lower(),
+            "score": float(pred["score"]),
+            "layoff_keywords": count_keywords(text, LAYOFF_KEYWORDS),
+            "restructuring_keywords": count_keywords(text, RESTRUCTURING_KEYWORDS),
+            "cost_cutting_keywords": count_keywords(text, COST_CUTTING_KEYWORDS),
+            "hiring_freeze_keywords": count_keywords(text, HIRING_FREEZE_KEYWORDS),
         }
+        analyzed.append({**article, **sentiment})
 
-        analyzed.append(
-            analyzed_article
-        )
-
-        print(
-            f"Processed "
-            f"{i}/{len(articles)}"
-        )
-
+    print(f"Processed all {len(articles)} articles in batch!")
     return analyzed
 def create_sentiment_features(
     analyzed_articles
