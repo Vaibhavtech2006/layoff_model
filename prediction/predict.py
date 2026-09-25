@@ -431,3 +431,7 @@ if __name__ == "__main__":
     company_name = input("\nEnter ANY global company name: ").strip()
     if company_name:
         predict_company(company_name)
+
+     
+
+     
