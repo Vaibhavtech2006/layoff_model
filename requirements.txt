@@ -1,10 +1,6 @@
-@"
---extra-index-url https://download.pytorch.org/whl/cpu
 fastapi
 uvicorn[standard]
 pydantic
-flask
-flask-cors
 groq
 langchain-groq
 langchain-core
@@ -20,7 +16,3 @@ numpy
 scikit-learn
 xgboost
 joblib
-shap
-torch
-transformers
-"@ | Set-Content -Encoding UTF8 requirements.txt
